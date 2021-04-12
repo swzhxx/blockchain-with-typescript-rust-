@@ -27,7 +27,7 @@ const initP2PServer = (p2pPort: number) => {
   server.on('connection', (ws: WebSocket) => {
     initConnection(ws)
   })
-  console.log('listening websocket p2p port on : ', p2pPort)
+  console.log('listening websocket p2p port on: ' + p2pPort)
 }
 
 const getSockets = () => sockets
@@ -43,7 +43,7 @@ const JSONToObject = <T>(data: string): T => {
   try {
     return JSON.parse(data)
   } catch (e) {
-    console.error(e)
+    console.log(e)
     return null
   }
 }
@@ -51,21 +51,19 @@ const JSONToObject = <T>(data: string): T => {
 const initMessageHandler = (ws: WebSocket) => {
   ws.on('message', (data: string) => {
     const message: Message = JSONToObject<Message>(data)
-    if (message == null) {
+    if (message === null) {
       console.log('could not parse received JSON message: ' + data)
       return
     }
     console.log('Received message' + JSON.stringify(message))
     switch (message.type) {
-      case MessageType.QUERY_LATEST: {
+      case MessageType.QUERY_LATEST:
         write(ws, responseLatestMsg())
         break
-      }
-      case MessageType.QUERY_ALL: {
+      case MessageType.QUERY_ALL:
         write(ws, responseChainMsg())
         break
-      }
-      case MessageType.RESPONSE_BLOCKCHAIN: {
+      case MessageType.RESPONSE_BLOCKCHAIN:
         const receivedBlocks: Block[] = JSONToObject<Block[]>(message.data)
         if (receivedBlocks === null) {
           console.log('invalid blocks received:')
@@ -74,14 +72,12 @@ const initMessageHandler = (ws: WebSocket) => {
         }
         handleBlockchainResponse(receivedBlocks)
         break
-      }
     }
   })
 }
 
 const write = (ws: WebSocket, message: Message): void =>
   ws.send(JSON.stringify(message))
-
 const broadcast = (message: Message): void =>
   sockets.forEach((socket) => write(socket, message))
 
@@ -104,7 +100,7 @@ const responseLatestMsg = (): Message => ({
 
 const initErrorHandler = (ws: WebSocket) => {
   const closeConnection = (myWs: WebSocket) => {
-    console.log('connection failed to peer :' + myWs.url)
+    console.log('connection failed to peer: ' + myWs.url)
     sockets.splice(sockets.indexOf(myWs), 1)
   }
   ws.on('close', () => closeConnection(ws))
@@ -112,7 +108,7 @@ const initErrorHandler = (ws: WebSocket) => {
 }
 
 const handleBlockchainResponse = (receivedBlocks: Block[]) => {
-  if (receivedBlocks.length == 0) {
+  if (receivedBlocks.length === 0) {
     console.log('received block chain size of 0')
     return
   }
@@ -121,7 +117,6 @@ const handleBlockchainResponse = (receivedBlocks: Block[]) => {
     console.log('block structuture not valid')
     return
   }
-
   const latestBlockHeld: Block = getLatestBlock()
   if (latestBlockReceived.index > latestBlockHeld.index) {
     console.log(
@@ -130,7 +125,6 @@ const handleBlockchainResponse = (receivedBlocks: Block[]) => {
         ' Peer got: ' +
         latestBlockReceived.index
     )
-
     if (latestBlockHeld.hash === latestBlockReceived.previousHash) {
       if (addBlockToChain(latestBlockReceived)) {
         broadcast(responseLatestMsg())
@@ -149,7 +143,7 @@ const handleBlockchainResponse = (receivedBlocks: Block[]) => {
   }
 }
 
-const broadcastLatest = () => {
+const broadcastLatest = (): void => {
   broadcast(responseLatestMsg())
 }
 
