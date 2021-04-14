@@ -146,3 +146,157 @@ class UnspentTxOut {
 ```ts static
 let unspentTxOuts: UnspentTxOut[] = []
 ```
+
+## 更新未使用的交易输出
+
+每次将新块添加到链中时，我们都必须更新未使用的交易输出列表。这是因为新交易将花费一些现有交易输出并引入新的未使用输出。
+为了解决这个问题，我们将首先从新块中检索所有新的未花费的交易输出（newUnspentTxOuts）
+
+```ts static
+const newUnspentTxOuts: UnspentTxOut[] = new Transactions.map((t) => {
+  return t.txOuts.map(txOut , index) => new UnspentTxOut(t.id , index, txOut.address,txOut.amount)
+}).reduce((a,b)=>a.concat(b) , [])
+```
+
+我们还需要知道该块的新交易(`consumedTxouts`)消耗了哪些交易输出。这将通过检查新交易的输入来解决：
+
+```ts static
+const consumedTxOuts: UnspentTxOut[] = new Transactions.map((t) => t.txIns)
+  .reduce((a, b) => a.concat(b), [])
+  .map((txIn) => {
+    return new UnspentTxOut(txIn, txOutId, txIn.txOutIndex, '', 0)
+  })
+```
+
+最后，我们可以通过删除 consumedTxOuts 并将 newUnspentTxOuts 添加到我们现有的交易输出中来生成新的未花费的交易输出。
+
+```ts static
+const resultingUnspentTxOuts = aUnspentTxOuts
+  .filter(
+    (uTxO) => !findUnspentTxOut(uTxO.txOutId, uTxO.txOutIndex, consumedTxOuts)
+  )
+  .concat(newUnspentTxOuts)
+```
+
+所描述的代码和功能包含在 updateUnspentTxOuts 方法中。应该注意的是，自由在验证了区块中的交易之后，才调用此方法。
+
+## 交易验证
+
+现在，我们终于可以列出使交易有效的规则：
+
+### 正确的交易结构
+
+交易必须符合`Transaction`，`TxIn`，`TxOut`的已定义类
+
+```ts static
+const isValidTransactionStructure = (transaction: Transaction) => {
+  if (typeof transaction.id !== 'string') {
+    console.log('transactionId missing')
+    return false
+  }
+  //....
+}
+```
+
+### 有效交易编号
+
+交易中 ID 必须正确计算。
+
+```ts static
+if (getTransactionId(transaction) !== transaction.id) {
+  console.log(`invalid tx id : ${transaction.id}`)
+  return false
+}
+```
+
+### 有效的 txIns
+
+txIns 中的签名必须有效，并且必须未使用引用的输出。
+
+```ts static
+const validateTxIn = (
+  txIn: TxIn,
+  transaction: Transaction,
+  aUnspentTxOuts: UnspentTxOut[]
+): boolean => {
+  const referencedUTxOut: UnspentTxOut = aUnspentTxOuts.find(
+    (uTxO) => uTxO.txOutId === txIn.txOutId && uTxO.txOutId === txIn.txOutId
+  )
+  if (referencedUTxOut == null) {
+    console.log(`referenced txOut not found : ${JSON.stringify(txIn)}`)
+    return false
+  }
+  const address = referencedUTxOut.address
+  const key = ec.keyFromPublic(address, 'hex')
+  return key.verify(transaction.id, txIn.signature)
+}
+```
+
+### 有效的 txOut 值
+
+在输出中指定的值的总和必须等于在输入中指定的值的总和。如果引用的输出包含 50 个硬币，则新输出中的值总和也必须为 50 个硬币。
+
+```ts static
+const totalTxInValues: number = transaction.txIns
+  .map((txIn) => getTxInAmount(txIn, aUnspentTxOuts))
+  .reduce((a, b) => a + b, 0)
+const totalTxOutValues = transaction.txOuts
+  .map((txOut) => txOut.amount)
+  .reduce((a, b) => a + b, 0)
+
+if (totalTxOutValues !== totalTxInValues) {
+  console.log(`totalTxOutValues !== totalTxInValues in tx : ${transaction.id}`)
+  return false
+}
+```
+
+## Coinbase 交易
+
+交易输入必须始终引用未使用的交易输出，但是初始代币从何处进入区块链？为了解决这个问题，引入了一种特殊类型的交易：coinbase 交易。
+
+Coinbase 交易仅包含输出，但不包括输入。这意味着基于硬币的交易增加了新硬币的流通量。我们制定的 coinbase 输出量为 50 个硬币
+
+```ts static
+const COINBASE_AMOUNT: number = 50
+```
+
+Coinbase 交易始终是区块中的第一笔交易，并且被区块的矿工包括在内。币值简历是对矿工的将激励：如果您找到该区块，就可以收集 50 个硬币。
+
+我们将区块高度添加到 coinbase 交易的输入中。这是为了确保每个 coinbase 交易都具有唯一的 txId。例如，如果没有此规则，则表示“将 50 个硬币分配给地址 0xabc”的 coinbase 交易将始终具有相同的 txId。
+
+Coinbase 交易的验证于“正常”交易的验证略有不同。
+
+```ts static
+const validateCoinbaseTx = (
+  transaction: Transaction,
+  blockIndex: number
+): boolean => {
+  if (getTransactionId(transaction) !== transaction.id) {
+    console.log(`invalid coinbase tx id : ${transaction.id}`)
+    return false
+  }
+  if (transaction.txIns.lengths !== 1) {
+    console.log(`one txIn must be specified in the coinbase transaction`)
+    return
+  }
+
+  if (transaction.txIns[0].txOutIndex !== blockIndex) {
+    console.log(`the txIn index in coinbase tx must be the block height`)
+    return false
+  }
+  if (transaction.txOuts.length !== 1) {
+    console.log(`invalid number of txOuts in coinbase transaction`)
+    return false
+  }
+  if (transaction.txOuts[0].amount !== COINBASE_AMOUNT) {
+    console.log(`invalid coinbase amount in coinbase transaction`)
+  }
+  return true
+}
+```
+
+## 结论
+
+我们将交易的概念纳入了区块链。基本思想很简单：我们在交易输入中应用未使用的输出，并使用签名来显示解锁部分是有效的。然后，我们使用输出将它们“重新锁定”到接收者地址。
+但是，创建交易仍然非常困难。我们必须手动创建交易的输入和输出，并使用我们的私钥对其进行签名。当我们在下一章节介绍钱包时，这种情况将会改变。
+还没有交易中继：要将交易包含到区块链中，您必须自己进行挖掘。这也是我们尚未引入交易费用概念的原因。
