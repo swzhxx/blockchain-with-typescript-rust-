@@ -126,3 +126,54 @@ const isValidTxForPool = (
 没有明确的方法可以从交易池中删除交易。但是，每次找到新块时，交易池都会更新。
 
 ## 从交易池到区块链
+
+接下来，让我们为未确认的交易实现一种方法，以找到其从本地交易池到同一节点开采的区块的方式。这很简单：当节点开始挖掘区块时，它将包括从事务池到新区块候选者的交易。
+
+```ts static
+const gererateNextBlock = () => {
+  const coinbaseTx: Transaction = getCoinbaseTransaction(
+    getPublicFromWallet(),
+    getLatestBlock().index + 1
+  )
+  const blockData: Transaction[] = [coinbaseTx].concat(getTransactionPool())
+  return generateRawNextBlock(blockData)
+}
+```
+
+由于已经验证了事务，因此在将它们添加到池之前，我们现在不会进行任何进一步验证。
+
+## 更新交易池（Updaing the transaction pool）
+
+随着具有交易的新区块被挖掘到区块链中，每次发现新区块时，我们都必须重新验证交易池。新块可能包含池中的某些交易无效的交易。例如，如果发生以下情况，可能会发生这种情况：
+
+- 池中的交易已被挖掘（由节点本身或其他人挖掘）
+- 在未确认的交易中应用的未使用的交易输出由其他交易使用
+
+交易池将使用以下代码更新:
+
+```ts static
+const updateTransactionPool = (unspentTxOuts: UnspentTxOut[]) => {
+  const invalidTxs = []
+  for (const tx of transactionPool) {
+    for (const txIn of tx.txIns) {
+      if (!hasTxIn(txIn, unspentTxOuts)) {
+        invalidTxs.push(tx)
+        break
+      }
+    }
+  }
+  if (invalidTxs.length > 0) {
+    console.log(
+      'removing the following transactions from txPool: %s',
+      JSON.stringify(invalidTxs)
+    )
+    transactionPool = _.without(transactionPool, ...invalidTxs)
+  }
+}
+```
+
+可以看出，我们只需要知道当前未使用的交易输出，就可以决定是否从池中删除事务。
+
+结论：
+
+现在，我们可以将交易包括到区块链中，而无需实际挖掘区块本身。但是，由于我们没有实现交易费用的概念，因此没有动力要求节点将受到的交易包括在区块中。
